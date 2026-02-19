@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 import pandas as pd
 import numpy as np
 import pickle
@@ -194,4 +194,84 @@ async def predict_csv(file: UploadFile = File(...)):
         "inference_type": inference_type,
         "total_customers": len(df),
         "results": results
+    }
+
+@app.post("/predict-single")
+async def predict_single(payload: dict = Body(...)):
+
+    # -----------------------------
+    # Basic Validation
+    # -----------------------------
+    if "transaction_type" not in payload:
+        raise HTTPException(status_code=400, detail="transaction_type missing.")
+
+    if "customer_unique_id" not in payload:
+        raise HTTPException(status_code=400, detail="customer_unique_id missing.")
+
+    transaction_type = payload["transaction_type"].lower()
+    customer_id = payload["customer_unique_id"]
+
+    # Convert single dict to DataFrame
+    df = pd.DataFrame([payload])
+
+    # -----------------------------
+    # Feature Engineering
+    # -----------------------------
+    df_processed = feature_engineering(df.copy())
+
+    # -----------------------------
+    # Model Routing
+    # -----------------------------
+    if transaction_type == "earn":
+        model = accu_model
+        bins = accu_bins
+        cat_cols = accu_cat_cols
+        feature_cols = accu_feature_cols
+        threshold = accu_threshold
+        inference_type = "accrual"
+
+    elif transaction_type == "redeem":
+        model = redm_model
+        bins = redm_bins
+        cat_cols = redm_cat_cols
+        feature_cols = redm_feature_cols
+        threshold = redm_threshold
+        inference_type = "redemption"
+
+    else:
+        raise HTTPException(status_code=400, detail="Invalid transaction_type.")
+
+    # -----------------------------
+    # Feature Validation
+    # -----------------------------
+    missing_cols = set(feature_cols) - set(df_processed.columns)
+    if missing_cols:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required features: {missing_cols}"
+        )
+
+    df_processed = df_processed[feature_cols]
+
+    # -----------------------------
+    # Prediction
+    # -----------------------------
+    pool = Pool(
+        data=df_processed,
+        cat_features=cat_cols
+    )
+
+    y_prob = model.predict_proba(pool)[0][1]
+    y_pred = int(y_prob > threshold)
+
+    decile = assign_decile(y_prob, bins)
+    severity = assign_severity(decile)
+
+    return {
+        "inference_type": inference_type,
+        "customer_id": customer_id,
+        "prediction": y_pred,
+        "probability": float(y_prob),
+        "decile": decile,
+        "anomaly_severity": severity
     }
