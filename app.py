@@ -183,6 +183,7 @@ async def predict_csv(file: UploadFile = File(...)):
         decile = assign_decile(y_prob[i], bins)
 
         results.append({
+            "inference_type": inference_type,
             "customer_id": customer_ids.iloc[i],
             "prediction": int(y_pred[i]),
             "probability": float(y_prob[i]),
@@ -191,7 +192,6 @@ async def predict_csv(file: UploadFile = File(...)):
         })
 
     return {
-        "inference_type": inference_type,
         "total_customers": len(df),
         "results": results
     }
