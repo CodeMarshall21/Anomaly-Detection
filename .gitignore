@@ -3,3 +3,5 @@
 *.pkl
 *.cbm
 __pycache__
+*.json
+*.log
