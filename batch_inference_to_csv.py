@@ -131,48 +131,85 @@ def evaluate_on_test(input_path):
     print(f"Total rows: {len(df)}")
     print(f"Test rows: {len(test_df)}")
 
-    actual_values = test_df["is_anomaly"]
+    actual_values_test = test_df["is_anomaly"]
+    actual_values_train = train_df["is_anomaly"]
 
     model, cat_cols, feature_cols, bins, threshold = load_artifacts(prefix)
 
     test_processed = feature_engineering(test_df.copy())
     test_processed = test_processed.drop(columns=["is_anomaly"])
+    
+    train_processed = feature_engineering(train_df.copy())
+    train_processed = train_processed.drop(columns=["is_anomaly"])
 
     # Enforce feature order
-    missing_cols = set(feature_cols) - set(test_processed.columns)
-    if missing_cols:
-        raise ValueError(f"Missing required features: {missing_cols}")
+    missing_cols_test = set(feature_cols) - set(test_processed.columns)
+    if missing_cols_test:
+        raise ValueError(f"Missing required features in test set: {missing_cols_test}")
+    
+    missing_cols_train = set(feature_cols) - set(train_processed.columns)
+    if missing_cols_train:
+        raise ValueError(f"Missing required features in train set: {missing_cols_train}")
 
     test_processed = test_processed[feature_cols]
+    train_processed = train_processed[feature_cols]
 
-    pool = Pool(
+    pool_test = Pool(
         data=test_processed,
         cat_features=cat_cols
     )
+    
+    pool_train = Pool(
+        data=train_processed,
+        cat_features=cat_cols
+    )
 
-    probabilities = model.predict_proba(pool)[:, 1]
-    predictions = (probabilities > threshold).astype(int)
+    probabilities_test = model.predict_proba(pool_test)[:, 1]
+    predictions = (probabilities_test > threshold).astype(int)
+    
+    probabilities_train = model.predict_proba(pool_train)[:, 1]
+    predictions_train = (probabilities_train > threshold).astype(int)
 
-    deciles = [assign_decile(p, bins) for p in probabilities]
-    severities = [assign_severity(d) for d in deciles]
+    deciles_train = [assign_decile(p, bins) for p in probabilities_train]
+    severities_train = [assign_severity(d) for d in deciles_train]
+
+    deciles_test = [assign_decile(p, bins) for p in probabilities_test]
+    severities_test = [assign_severity(d) for d in deciles_test]
 
     # Create final output
-    output_df = test_df.copy()
-    output_df["actual_is_anomaly"] = actual_values
-    output_df["predicted_is_anomaly"] = predictions
-    output_df["probability"] = probabilities
-    output_df["decile"] = deciles
-    output_df["anomaly_severity"] = severities
-    output_df["inference_type"] = inference_type
+    output_df_test = test_df.copy()
+    output_df_test["actual_is_anomaly"] = actual_values_test
+    output_df_test["predicted_is_anomaly"] = predictions
+    output_df_test["probability"] = probabilities_test
+    output_df_test["decile"] = deciles_test
+    output_df_test["anomaly_severity"] = severities_test
+    output_df_test["inference_type"] = inference_type
+    
+    output_df_train = train_df.copy()
+    output_df_train["actual_is_anomaly"] = actual_values_train
+    output_df_train["predicted_is_anomaly"] = predictions_train
+    output_df_train["probability"] = probabilities_train
+    output_df_train["decile"] = deciles_train
+    output_df_train["anomaly_severity"] = severities_train
+    output_df_train["inference_type"] = inference_type
 
-    output_file = os.path.join(
+    output_file_train = os.path.join(
+        OUTPUT_DIR,
+        f"{prefix}_train_scored.csv"
+    )
+
+    output_df_train.to_csv(output_file_train, index=False)
+
+    print(f"Saved train evaluation to: {output_file_train}")
+
+    output_file_test = os.path.join(
         OUTPUT_DIR,
         f"{prefix}_test_scored.csv"
     )
 
-    output_df.to_csv(output_file, index=False)
+    output_df_test.to_csv(output_file_test, index=False)
 
-    print(f"Saved test evaluation to: {output_file}")
+    print(f"Saved test evaluation to: {output_file_test}")
 
 
 # -----------------------------
