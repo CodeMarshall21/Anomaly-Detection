@@ -6,3 +6,4 @@ seaborn
 catboost
 fastapi
 uvicorn
+python-multipart
