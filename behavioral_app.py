@@ -1,7 +1,3 @@
-# ============================================
-# behavioral_app.py
-# ============================================
-
 from fastapi import FastAPI, HTTPException
 from catboost import CatBoostClassifier, Pool
 import pandas as pd
@@ -12,10 +8,6 @@ from datetime import timedelta
 app = FastAPI()
 
 MODEL_DIR = "behavioral_model"
-
-# =====================================================
-# LOAD ARTIFACTS
-# =====================================================
 
 def load_artifacts(prefix):
 
@@ -42,21 +34,13 @@ def load_artifacts(prefix):
 accu_model, accu_feature_cols, accu_cat_cols, accu_bins, accu_threshold = load_artifacts("accu_behavioral")
 redeem_model, redeem_feature_cols, redeem_cat_cols, redeem_bins, redeem_threshold = load_artifacts("redeem_behavioral")
 
-
-# =====================================================
-# LOAD HISTORY DATABASES
-# =====================================================
-
 with open(f"{MODEL_DIR}/earn_user_db.pkl", "rb") as f:
     earn_history_store = pickle.load(f)
 
+
 with open(f"{MODEL_DIR}/redeem_user_db.pkl", "rb") as f:
     redeem_history_store = pickle.load(f)
-
-
-# =====================================================
-# DECILE + SEVERITY
-# =====================================================
+    
 
 def assign_decile(prob, bins):
     for i, cutoff in enumerate(bins):
@@ -76,10 +60,6 @@ def assign_severity(decile):
         return "Low Risk"
 
 
-# =====================================================
-# BASIC PREPROCESS (RUNTIME VERSION)
-# =====================================================
-
 def runtime_basic_preprocess(txn):
 
     txn["transaction_date"] = pd.to_datetime(txn["transaction_date"])
@@ -91,13 +71,16 @@ def runtime_basic_preprocess(txn):
     return txn
 
 
-# =====================================================
-# BEHAVIORAL FEATURE ENGINEERING (RUNTIME)
-# =====================================================
 
 def compute_behavioral_features(history, txn):
 
+    history = sorted(history, key=lambda x: x["transaction_date"])
     now = txn["transaction_date"]
+
+    last_10min = [
+        h for h in history
+        if now - h["transaction_date"] <= timedelta(minutes=10)
+    ]
 
     last_1h = [
         h for h in history
@@ -109,6 +92,7 @@ def compute_behavioral_features(history, txn):
         if now - h["transaction_date"] <= timedelta(hours=24)
     ]
 
+    txn_last_10min = len(last_10min)
     txn_last_1h = len(last_1h)
     txn_last_24h = len(last_24h)
 
@@ -118,36 +102,25 @@ def compute_behavioral_features(history, txn):
 
         amounts = [h["amount"] for h in history]
         avg_amount = np.mean(amounts)
-        std_amount = np.std(amounts)
     else:
         time_since_last = -1
         avg_amount = 0
-        std_amount = 0
 
     amount_ratio = txn["amount"] / avg_amount if avg_amount > 0 else 0
-
-    if std_amount > 0:
-        z_score = (txn["amount"] - avg_amount) / std_amount
-    else:
-        z_score = 0
 
     balance_ratio = txn["points"] / (txn["opening_balance"] + 1e-6)
     balance_ratio = np.clip(balance_ratio, 0, 10)
 
     return {
         "time_since_last_transaction": time_since_last,
+        "transactions_last_10_min": txn_last_10min,
         "transactions_last_1h": txn_last_1h,
         "transactions_last_24h": txn_last_24h,
         "user_avg_amount": avg_amount,
         "amount_to_user_avg_ratio": amount_ratio,
-        "z_score_amount": z_score,
         "balance_depletion_ratio": balance_ratio
     }
 
-
-# =====================================================
-# FINALIZE FEATURES (MATCH TRAINING)
-# =====================================================
 
 def finalize_for_inference(df, feature_cols):
 
@@ -166,9 +139,6 @@ def finalize_for_inference(df, feature_cols):
     return df
 
 
-# =====================================================
-# MAIN ENDPOINT
-# =====================================================
 
 @app.post("/predict-single")
 def predict_single(payload: dict):
@@ -209,6 +179,7 @@ def predict_single(payload: dict):
         raise HTTPException(status_code=400, detail="Invalid transaction_type")
 
     history = history_store.get(customer_id, [])
+    print("History length:", len(history))
 
     # 3️⃣ Behavioral features
     behavioral_features = compute_behavioral_features(history, txn)
